@@ -21,6 +21,12 @@ enum ScreenState {
 };
 ScreenState currentScreen = HOME;  // Track the current screen state
 
+enum RenderMode {
+  FAST,
+  ACCURATE
+};
+RenderMode currentRenderMode = FAST;
+
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
 #define FONT_SIZE 1
@@ -43,6 +49,10 @@ int btn120_x = btn60_x + BTN_SPACING + BTN_RADIUS * 2;
 #define HOME_BTN_SIZE 30
 #define HOME_BTN_X 0
 #define HOME_BTN_Y 0
+// Render button properties (square button below the home button)
+#define RENDER_BTN_SIZE 30
+#define RENDER_BTN_X 0
+#define RENDER_BTN_Y HOME_BTN_SIZE + 60
 
 // Start button properties
 #define START_BTN_RADIUS 50
@@ -78,8 +88,24 @@ void drawCloseButton() {
     tft.fillRect(centerX - lineLength / 2, centerY - lineThickness / 2, lineLength, lineThickness, TFT_WHITE);
 }
 
+void drawRenderButton(RenderMode currentRenderMode) {
+    // Draw render button
+    tft.fillRect(RENDER_BTN_X, RENDER_BTN_Y, RENDER_BTN_SIZE, RENDER_BTN_SIZE, TFT_BLACK);
+
+    // Draw text inside the render button (F for fast, A for accurate)
+    tft.setTextColor(TFT_WHITE);
+    if (currentRenderMode == FAST) {
+        tft.drawCentreString("F", RENDER_BTN_X + RENDER_BTN_SIZE / 2, RENDER_BTN_Y + RENDER_BTN_SIZE / 2, FONT_SIZE);
+    } else {
+        tft.drawCentreString("A", RENDER_BTN_X + RENDER_BTN_SIZE / 2, RENDER_BTN_Y + RENDER_BTN_SIZE / 2, FONT_SIZE);
+    }
+    // Write render mode text above the button
+    tft.setTextColor(TFT_BLACK);
+    tft.drawCentreString("Render Mode", RENDER_BTN_X + RENDER_BTN_SIZE / 2 + 20, RENDER_BTN_Y - 10, FONT_SIZE);
+}
+
 // Function to draw round buttons
-void drawButtons() {
+void drawButtons(RenderMode currentRenderMode) {
     // Draw reset button
     tft.fillCircle(btnreset_x, BTN_Y, BTN_RADIUS, TFT_BLUE);
     tft.setTextColor(TFT_WHITE);
@@ -100,6 +126,9 @@ void drawButtons() {
 
     // Draw home button
     drawCloseButton();
+
+    // Draw render button
+    drawRenderButton(currentRenderMode);
 
 }
 
@@ -165,6 +194,22 @@ void drawArc(int centerX, int centerY, int radius, int angle, uint16_t color) {
     }
 }
 
+void drawAngleLines(int centerX, int centerY, int radius, int angle, uint16_t color) {
+    // Draw lines for the angles (only for the start and end angles)
+    int startAngle = -angle / 2;
+    int endAngle = angle / 2;
+
+    // Calculate the start and end points of the lines
+    int x1 = centerX + (radius * sinTable[startAngle + ANGLE_LIST_OFFSET]) / 1000;
+    int y1 = centerY - (radius * cosTable[startAngle + ANGLE_LIST_OFFSET]) / 1000;
+    int x2 = centerX + (radius * sinTable[endAngle + ANGLE_LIST_OFFSET]) / 1000;
+    int y2 = centerY - (radius * cosTable[endAngle + ANGLE_LIST_OFFSET]) / 1000;
+
+    // Draw the lines
+    tft.drawLine(centerX, centerY, x1, y1, color);
+    tft.drawLine(centerX, centerY, x2, y2, color);
+}
+
 
 
 // Function to clear the rectangular area around the arc
@@ -173,18 +218,18 @@ void clearArcBoundingBox(int centerX, int centerY, int radius) {
     int x = centerX - radius;
     int y = centerY - radius;
 
-    // Clear the bounding box by filling it with the background color (e.g., TFT_WHITE)
-    tft.fillRect(x, y, 2 * radius, radius, TFT_WHITE);  // Only half the box, from the center downward
+    // Clear the bounding box by filling it with the background color (e.g., TFT_WHITE) (and 5 pixel extra on all sides)
+    tft.fillRect(x, y, 2 * radius + 10, 2 * radius + 10, TFT_WHITE);
 }
 
 
 // Function to visualize the angles with everything outside them in green
-void drawAngleVisualization(int angle_measured, int angle_pred_springback, ScreenState currentScreen) {
+void drawAngleVisualization(int angle_measured, int angle_pred_springback, ScreenState currentScreen, RenderMode currentRenderMode) {
 
     // Set the center at the bottom middle of the screen
     int centerX = SCREEN_WIDTH / 2;
     int centerY = SCREEN_HEIGHT;
-    int radius = 150;  // Radius for the angle visualization
+    int radius = 120;  // Radius for the angle visualization
 
     if (currentScreen == ANGLE) {
         // Clear the rectangular area around the arc
@@ -192,9 +237,10 @@ void drawAngleVisualization(int angle_measured, int angle_pred_springback, Scree
     } else if (currentScreen == HOME) {
         // Clear the full screen and draw the buttons
         tft.fillScreen(TFT_WHITE);
-        drawButtons();
+        drawButtons(currentRenderMode);
     }
 
+  if (currentRenderMode == ACCURATE) {
     // Draw the entire region in green (outside the angles)
     tft.fillCircle(centerX, centerY, radius, TFT_GREEN);
 
@@ -212,6 +258,17 @@ void drawAngleVisualization(int angle_measured, int angle_pred_springback, Scree
     // Display the current predicted angle for springback
     String predAngleText = "Predicted Springback Angle = " + String(angle_pred_springback) + "deg";
     tft.drawCentreString(predAngleText, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 50, FONT_SIZE);
+  }
+  else if (currentRenderMode == FAST) {
+    // Draw only lines for the angles (no filled arcs)
+    drawAngleLines(centerX, centerY, radius, angle_measured, TFT_RED);
+    drawAngleLines(centerX, centerY, radius, angle_pred_springback, TFT_BLUE);
+
+    // Display the current measured angle at the bottom of the screen
+    String angleText = "Measured Angle = " + String(angle_measured) + "deg";
+    tft.setTextColor(TFT_BLACK);
+    tft.drawCentreString(angleText, SCREEN_WIDTH / 2, SCREEN_HEIGHT - 30, FONT_SIZE);
+    }
 }
 
 // Check if a round button was pressed and return the corresponding angle
@@ -227,6 +284,12 @@ int checkButtonPress(int touchX, int touchY) {
         return 180;
     }
     return -1;  // No button pressed
+}
+
+// Check if the render button was pressed
+bool checkRenderButtonPress(int touchX, int touchY) {
+    return touchX >= RENDER_BTN_X && touchX <= RENDER_BTN_X + RENDER_BTN_SIZE &&
+           touchY >= RENDER_BTN_Y && touchY <= RENDER_BTN_Y + RENDER_BTN_SIZE;
 }
 
 // Check if the start button was pressed
@@ -279,28 +342,34 @@ void loop() {
     switch (currentScreen) {
       case HOME:
         if (checkStartButtonPress(touchX, touchY)) {
-          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen);
+          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
           currentScreen = ANGLE;  // Switch to angle screen
         }
         break;
       case ANGLE:
         // Check if a round button was pressed
         int newAngle = checkButtonPress(touchX, touchY);
+        bool renderButtonPressed = checkRenderButtonPress(touchX, touchY);
+
         if (newAngle != -1) {
           angle_measured = newAngle;
           angle_pred_springback = calculateSpringbackAngle(angle_measured);
-          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen);
+          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
 
           if (newAngle == 180) {
               for (angle_measured = 180; angle_measured >= 90; angle_measured--) {
                   angle_pred_springback = calculateSpringbackAngle(angle_measured);
-                  drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen);
-                  delay(500);
+                  drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
+                  delay(100);
               }
           }
         }
-
-
+        // Check if render button was pressed
+        else if (renderButtonPressed) {
+          currentRenderMode = (currentRenderMode == FAST) ? ACCURATE : FAST;
+          drawRenderButton(currentRenderMode);
+          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
+        }
         // Check if Back button is pressed
         if (checkHomeButtonPress(touchX, touchY)) {
           currentScreen = HOME;  // Switch back to home screen
