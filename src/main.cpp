@@ -27,6 +27,12 @@ enum RenderMode {
 };
 RenderMode currentRenderMode = FAST;
 
+enum MeasureState {
+  MEASURING,
+  IDLE
+};
+MeasureState currentMeasureState = IDLE;
+
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
 #define FONT_SIZE 1
@@ -34,25 +40,25 @@ RenderMode currentRenderMode = FAST;
 // Touchscreen coordinates: (x, y) and pressure (z)
 int x, y, z;
 
-int angle_measured = 0;  // Default measured angle
+int angleMeasured = 180;  // Default measured angle
 int angle_pred_springback = 0;  // Default predicted springback angle
 
 // Button properties (round buttons at the top)
 #define BTN_RADIUS 25
 #define BTN_SPACING 25
-int btnreset_x = 60;  // X position for the reset button
-int btn20_x = btnreset_x + BTN_RADIUS * 2 + BTN_SPACING;
+int btnmeasure_x = 40;  // X position for the reset button
+int btn20_x = btnmeasure_x + BTN_RADIUS * 2 + BTN_SPACING;
 int btn60_x = btn20_x + BTN_SPACING + BTN_RADIUS * 2;
 int btn120_x = btn60_x + BTN_SPACING + BTN_RADIUS * 2;
-#define BTN_Y 50  // Y position for all buttons
+#define BTN_Y 80  // Y position for all control buttons
 // Home button properties (square button at the upper left)
 #define HOME_BTN_SIZE 30
 #define HOME_BTN_X 0
 #define HOME_BTN_Y 0
-// Render button properties (square button below the home button)
+// Render button properties (square button in the upper right)
 #define RENDER_BTN_SIZE 30
-#define RENDER_BTN_X 0
-#define RENDER_BTN_Y HOME_BTN_SIZE + 60
+#define RENDER_BTN_X SCREEN_WIDTH - RENDER_BTN_SIZE
+#define RENDER_BTN_Y 0
 
 // Start button properties
 #define START_BTN_RADIUS 50
@@ -65,7 +71,7 @@ int btn120_x = btn60_x + BTN_SPACING + BTN_RADIUS * 2;
 int16_t sinTable[NUM_DEGREES];
 int16_t cosTable[NUM_DEGREES];
 
-void setupTrigTables() {
+void setupTrigTables() {  // Fill the sine and cosine lookup tables for the visualization of angles
     for (int i = -180; i <= 180; i++) {
         int index = i + ANGLE_LIST_OFFSET; // Offset index to handle negative angles
         sinTable[index] = (int16_t)(sin(i * DEG_TO_RAD) * 1000); // Scale by 1000
@@ -74,7 +80,7 @@ void setupTrigTables() {
 }
 
 void drawCloseButton() {
-    // Draw home button
+    // Draw close button
     tft.fillRect(HOME_BTN_X, HOME_BTN_Y, HOME_BTN_SIZE, HOME_BTN_SIZE, TFT_RED);
     
     // Draw cross inside home button (rotated 45 degrees)
@@ -99,18 +105,12 @@ void drawRenderButton(RenderMode currentRenderMode) {
     } else {
         tft.drawCentreString("A", RENDER_BTN_X + RENDER_BTN_SIZE / 2, RENDER_BTN_Y + RENDER_BTN_SIZE / 2, FONT_SIZE);
     }
-    // Write render mode text above the button
+    // Write render mode text to the left of the button
     tft.setTextColor(TFT_BLACK);
-    tft.drawCentreString("Render Mode", RENDER_BTN_X + RENDER_BTN_SIZE / 2 + 20, RENDER_BTN_Y - 10, FONT_SIZE);
+    tft.drawCentreString("Render Mode:", RENDER_BTN_X - 40, RENDER_BTN_Y + RENDER_BTN_SIZE / 2, FONT_SIZE);
 }
 
-// Function to draw round buttons
-void drawButtons(RenderMode currentRenderMode) {
-    // Draw reset button
-    tft.fillCircle(btnreset_x, BTN_Y, BTN_RADIUS, TFT_BLUE);
-    tft.setTextColor(TFT_WHITE);
-    tft.drawCentreString("Reset", btnreset_x, BTN_Y - 10, FONT_SIZE);
-
+void drawControlButtons() {
     // Draw button for 20 degrees
     tft.fillCircle(btn20_x, BTN_Y, BTN_RADIUS, TFT_BLUE);
     tft.setTextColor(TFT_WHITE);
@@ -123,6 +123,24 @@ void drawButtons(RenderMode currentRenderMode) {
     // Draw button for 120 degrees
     tft.fillCircle(btn120_x, BTN_Y, BTN_RADIUS, TFT_BLUE);
     tft.drawCentreString("120deg", btn120_x, BTN_Y - 10, FONT_SIZE);
+}
+
+void drawMeasureButton(MeasureState currentMeasureState) {
+    // Draw measure button
+    tft.setTextColor(TFT_WHITE);
+    if (currentMeasureState == IDLE) {
+        tft.fillCircle(btnmeasure_x, BTN_Y, BTN_RADIUS, TFT_DARKGREY);
+        tft.drawCentreString("IDLE", btnmeasure_x, BTN_Y - 10, FONT_SIZE);
+    } else {
+        tft.fillCircle(btnmeasure_x, BTN_Y, BTN_RADIUS, TFT_DARKGREEN);
+        tft.drawCentreString("MEASURE", btnmeasure_x, BTN_Y - 10, FONT_SIZE);
+    }
+  }
+
+// Function to draw round buttons
+void drawButtons(RenderMode currentRenderMode, MeasureState currentMeasureState) {
+    // Draw control buttons
+    drawControlButtons();
 
     // Draw home button
     drawCloseButton();
@@ -130,6 +148,8 @@ void drawButtons(RenderMode currentRenderMode) {
     // Draw render button
     drawRenderButton(currentRenderMode);
 
+    // Draw measurement button
+    drawMeasureButton(currentMeasureState);
 }
 
 // Function to draw the home screen
@@ -237,7 +257,7 @@ void drawAngleVisualization(int angle_measured, int angle_pred_springback, Scree
     } else if (currentScreen == HOME) {
         // Clear the full screen and draw the buttons
         tft.fillScreen(TFT_WHITE);
-        drawButtons(currentRenderMode);
+        drawButtons(currentRenderMode, currentMeasureState);
     }
 
   if (currentRenderMode == ACCURATE) {
@@ -280,10 +300,9 @@ int checkButtonPress(int touchX, int touchY) {
         return 60;
     } else if (sqrt(sq(touchX - btn120_x) + sq(touchY - BTN_Y)) <= BTN_RADIUS) {
         return 120;
-    } else if (sqrt(sq(touchX - btnreset_x) + sq(touchY - BTN_Y)) <= BTN_RADIUS) {
-        return 180;
+    } else {
+        return -1;  // No button pressed
     }
-    return -1;  // No button pressed
 }
 
 // Check if the render button was pressed
@@ -291,15 +310,17 @@ bool checkRenderButtonPress(int touchX, int touchY) {
     return touchX >= RENDER_BTN_X && touchX <= RENDER_BTN_X + RENDER_BTN_SIZE &&
            touchY >= RENDER_BTN_Y && touchY <= RENDER_BTN_Y + RENDER_BTN_SIZE;
 }
-
 // Check if the start button was pressed
 bool checkStartButtonPress(int touchX, int touchY) {
   return sqrt(sq(touchX - START_BTN_X) + sq(touchY - START_BTN_Y)) <= START_BTN_RADIUS;
 }
-
 // Check if the home button was pressed
 bool checkHomeButtonPress(int touchX, int touchY) {
   return sqrt(sq(touchX - HOME_BTN_X) + sq(touchY - HOME_BTN_Y)) <= HOME_BTN_SIZE;
+}
+// Check if the measure button was pressed
+bool checkMeasureButtonPress(int touchX, int touchY) {
+  return sqrt(sq(touchX - btnmeasure_x) + sq(touchY - BTN_Y)) <= BTN_RADIUS;
 }
 
 // Calculate springback angle based on the measured angle and the material properties
@@ -309,6 +330,93 @@ int calculateSpringbackAngle(int measuredAngle) {
     return measuredAngle + (180 - measuredAngle) * 0.1;
 }
 
+// Function to retrieve touch coordinates
+bool getTouchCoordinates(int &touchX, int &touchY) {
+    if (touchscreen.tirqTouched() && touchscreen.touched()) {
+        TS_Point p = touchscreen.getPoint();
+        // Map touchscreen points to screen coordinates
+        touchX = map(p.x, 200, 3700, 1, SCREEN_WIDTH);
+        touchY = map(p.y, 240, 3800, 1, SCREEN_HEIGHT);
+        return true;  // Touch detected
+    }
+    return false;  // No touch detected
+}
+
+bool getMeasuredAngle(int &angleMeasured) {
+  // FOR I/O INPUT:
+  // Check if the angle has changed
+  // int newAngle = analogRead(A0);  // Read the angle from the analog pin
+  // Make sure angle is within 0 to 180 degrees
+  // if (newAngle < 0) {
+  //     newAngle = 0;
+  // } else if (newAngle > 180) {
+  //     newAngle = 180;
+  // }
+
+  // FOR SIMULATION:
+    static int lastAngle = 180;  // Start at 180 degrees
+    static int angleDirection = -1;  // Start by decreasing the angle (from 180 to 0)
+    // Update angle based on direction
+    int newAngle = lastAngle + angleDirection;
+    // Reverse direction when limits are reached (180 or 0 degrees)
+    if (newAngle > 160) {
+        newAngle = 160;
+        angleDirection = -1;  // Start decreasing
+    } else if (newAngle < 40) {
+        newAngle = 40;
+        angleDirection = 1;  // Start increasing
+    }
+
+
+    // Check if the angle has changed
+    if (newAngle != angleMeasured) {
+        angleMeasured = newAngle;
+        lastAngle = newAngle;  // Update lastAngle
+        return true;  // Angle updated
+    }
+    return false;  // No angle update
+}
+
+// Function to handle the home screen
+void handleHomeScreen(int touchX, int touchY) {
+    if (checkStartButtonPress(touchX, touchY)) {
+        drawAngleVisualization(angleMeasured, angle_pred_springback, currentScreen, currentRenderMode);
+        currentScreen = ANGLE;  // Switch to angle screen
+    }
+}
+
+// Function to handle the angle screen
+void handleAngleScreen(int touchX, int touchY, int angleMeasured) {
+  // Check if Back button is pressed
+  if (checkHomeButtonPress(touchX, touchY)) {
+      currentScreen = HOME;  // Switch back to home screen
+      drawHomeScreen();
+      return;
+  }
+
+  // Check if render button was pressed
+  if (checkRenderButtonPress(touchX, touchY)) {
+      currentRenderMode = (currentRenderMode == FAST) ? ACCURATE : FAST;
+      drawRenderButton(currentRenderMode);
+      drawAngleVisualization(angleMeasured, angle_pred_springback, currentScreen, currentRenderMode);
+  }
+
+  // Check if Measure button was pressed
+  if (checkMeasureButtonPress(touchX, touchY)) {
+      currentMeasureState = (currentMeasureState == IDLE) ? MEASURING : IDLE;
+      drawMeasureButton(currentMeasureState);
+  }
+
+  if (currentMeasureState == MEASURING) {
+      angle_pred_springback = calculateSpringbackAngle(angleMeasured);
+      drawAngleVisualization(angleMeasured, angle_pred_springback, currentScreen, currentRenderMode);
+  } else {
+    return;  
+  }
+}
+
+
+// Setup function - runs once
 void setup() {
   Serial.begin(115200);
 
@@ -328,56 +436,28 @@ void setup() {
   setupTrigTables();
 }
 
+// Main loop - runs continuously after setup
 void loop() {
-  // Check if the touchscreen was touched
-  if (touchscreen.tirqTouched() && touchscreen.touched()) {
-    // Get touchscreen points
-    TS_Point p = touchscreen.getPoint();
+    int touchX, touchY;
+    bool touchDetected = getTouchCoordinates(touchX, touchY);
 
-    // Map touchscreen points to screen coordinates
-    int touchX = map(p.x, 200, 3700, 1, SCREEN_WIDTH);
-    int touchY = map(p.y, 240, 3800, 1, SCREEN_HEIGHT);
+    int angleMeasured;
+    bool angleUpdated = getMeasuredAngle(angleMeasured);
 
-    // Handle screen navigation based on the current screen state
+    // Process screen state whether touch is detected or from other inputs
     switch (currentScreen) {
-      case HOME:
-        if (checkStartButtonPress(touchX, touchY)) {
-          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
-          currentScreen = ANGLE;  // Switch to angle screen
-        }
-        break;
-      case ANGLE:
-        // Check if a round button was pressed
-        int newAngle = checkButtonPress(touchX, touchY);
-        bool renderButtonPressed = checkRenderButtonPress(touchX, touchY);
+        case HOME:
+            if (touchDetected) {
+                handleHomeScreen(touchX, touchY);
+            }
+            break;
 
-        if (newAngle != -1) {
-          angle_measured = newAngle;
-          angle_pred_springback = calculateSpringbackAngle(angle_measured);
-          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
-
-          if (newAngle == 180) {
-              for (angle_measured = 180; angle_measured >= 90; angle_measured--) {
-                  angle_pred_springback = calculateSpringbackAngle(angle_measured);
-                  drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
-                  delay(100);
-              }
-          }
-        }
-        // Check if render button was pressed
-        else if (renderButtonPressed) {
-          currentRenderMode = (currentRenderMode == FAST) ? ACCURATE : FAST;
-          drawRenderButton(currentRenderMode);
-          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen, currentRenderMode);
-        }
-        // Check if Back button is pressed
-        if (checkHomeButtonPress(touchX, touchY)) {
-          currentScreen = HOME;  // Switch back to home screen
-          drawHomeScreen();
-        }
-        break;
+        case ANGLE:
+            if (touchDetected || angleUpdated) {
+                handleAngleScreen(touchX, touchY, angleMeasured);
+            }
+            break;
     }
 
-    delay(200);  // Small delay to debounce touchscreen press
-  }
+    delay(100);  // Small delay to debounce touchscreen press or slow down updates
 }
