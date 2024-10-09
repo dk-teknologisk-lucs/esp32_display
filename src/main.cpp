@@ -14,6 +14,13 @@ TFT_eSPI tft = TFT_eSPI();
 SPIClass touchscreenSPI = SPIClass(VSPI);
 XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
 
+// Define screen states
+enum ScreenState {
+  HOME,
+  ANGLE
+};
+ScreenState currentScreen = HOME;  // Track the current screen state
+
 #define SCREEN_WIDTH 320
 #define SCREEN_HEIGHT 240
 #define FONT_SIZE 1
@@ -25,9 +32,10 @@ int angle_measured = 0;  // Default measured angle
 int angle_pred_springback = 0;  // Default predicted springback angle
 
 // Button properties (round buttons at the top)
-#define BTN_RADIUS 30
-#define BTN_SPACING 40
-int btn20_x = 60;  // X positions for the three buttons
+#define BTN_RADIUS 25
+#define BTN_SPACING 25
+int btnreset_x = 60;  // X position for the reset button
+int btn20_x = btnreset_x + BTN_RADIUS * 2 + BTN_SPACING;
 int btn60_x = btn20_x + BTN_SPACING + BTN_RADIUS * 2;
 int btn120_x = btn60_x + BTN_SPACING + BTN_RADIUS * 2;
 #define BTN_Y 50  // Y position for all buttons
@@ -41,13 +49,19 @@ int btn120_x = btn60_x + BTN_SPACING + BTN_RADIUS * 2;
 #define START_BTN_Y 100
 #define START_BTN_X (SCREEN_WIDTH / 2)
 
-// Define screen states
-enum ScreenState {
-  HOME,
-  ANGLE
-};
+#define NUM_DEGREES 361 // 0 to 180 degrees and -180 to 180 degrees (361 total)
+#define ANGLE_LIST_OFFSET 180       // To offset the index for negative angles
 
-ScreenState currentScreen = HOME;  // Track the current screen state
+int16_t sinTable[NUM_DEGREES];
+int16_t cosTable[NUM_DEGREES];
+
+void setupTrigTables() {
+    for (int i = -180; i <= 180; i++) {
+        int index = i + ANGLE_LIST_OFFSET; // Offset index to handle negative angles
+        sinTable[index] = (int16_t)(sin(i * DEG_TO_RAD) * 1000); // Scale by 1000
+        cosTable[index] = (int16_t)(cos(i * DEG_TO_RAD) * 1000); // Scale by 1000
+    }
+}
 
 void drawCloseButton() {
     // Draw home button
@@ -66,6 +80,11 @@ void drawCloseButton() {
 
 // Function to draw round buttons
 void drawButtons() {
+    // Draw reset button
+    tft.fillCircle(btnreset_x, BTN_Y, BTN_RADIUS, TFT_BLUE);
+    tft.setTextColor(TFT_WHITE);
+    tft.drawCentreString("Reset", btnreset_x, BTN_Y - 10, FONT_SIZE);
+
     // Draw button for 20 degrees
     tft.fillCircle(btn20_x, BTN_Y, BTN_RADIUS, TFT_BLUE);
     tft.setTextColor(TFT_WHITE);
@@ -81,6 +100,7 @@ void drawButtons() {
 
     // Draw home button
     drawCloseButton();
+
 }
 
 // Function to draw the home screen
@@ -95,38 +115,85 @@ void drawHomeScreen() {
   tft.drawCentreString("Start Angle", START_BTN_X, START_BTN_Y - 10, FONT_SIZE);
 }
 
-// Function to draw filled arcs (part-circles)
+// // Function to draw filled arcs (part-circles)
 void drawArc(int centerX, int centerY, int radius, int angle, uint16_t color) {
-    int startAngle = -angle / 2;
-    int endAngle = angle / 2;
+    // Normalize the angle to be between 0 and 180
+    if (angle < 0) angle = 0;
+    if (angle > 180) angle = 180;
+
+    int multiplierValue = 1;
+
+    // Determine a suitable multiplier value to increase drawing speed (but reduce resolution)
+    if (angle < 10) {
+        multiplierValue = 1;  // For very small angles, use the finest granularity
+    } else if (angle < 20) {
+        multiplierValue = 2;  // Small angles, moderate granularity
+    } else {
+        multiplierValue = 4;  // For angles greater than or equal to 20, the lowest granularity
+    }
+    // Round down the angle to the nearest multiple of the multiplier value
+    int visAngle = (angle / multiplierValue) * multiplierValue;
+
+    // Calculate start and end angles based on the provided angle
+    int startAngle = -visAngle / 2;  // Negative angle for clockwise drawing
+    int endAngle = visAngle / 2;
 
     // Draw the arc as filled triangles
-    for (int i = startAngle; i < endAngle; i++) {
-        float radians1 = i * DEG_TO_RAD;
-        float radians2 = (i + 1) * DEG_TO_RAD;  // Next angle for the triangle
+    for (int i = startAngle; i < endAngle; i+=multiplierValue) {
+        // Ensure indices are within valid range for the lookup table
+        int index1 = i + ANGLE_LIST_OFFSET;  // Normalize to positive index
+        int index2 = (i + multiplierValue) + ANGLE_LIST_OFFSET;  // Next angle
 
-        int x1 = centerX + radius * sin(radians1);
-        int y1 = centerY - radius * cos(radians1);
-        int x2 = centerX + radius * sin(radians2);
-        int y2 = centerY - radius * cos(radians2);
+        int16_t sinVal1 = sinTable[index1];
+        int16_t cosVal1 = cosTable[index1];
+        int16_t sinVal2 = sinTable[index2 ];
+        int16_t cosVal2 = cosTable[index2];
+
+        int16_t x_1_add = (radius * sinVal1) / 1000;
+        int16_t y_1_add = (radius * cosVal1) / 1000;
+        int16_t x_2_add = (radius * sinVal2) / 1000;
+        int16_t y_2_add = (radius * cosVal2) / 1000;
+
+        // Use lookup table values
+        int x1 = centerX + x_1_add;
+        int y1 = centerY - y_1_add;
+        int x2 = centerX + x_2_add;
+        int y2 = centerY - y_2_add;
 
         // Draw filled triangle from center to arc edges
         tft.fillTriangle(centerX, centerY, x1, y1, x2, y2, color);
     }
 }
 
-// Function to visualize the angles with everything outside them in green
-void drawAngleVisualization(int angle_measured, int angle_pred_springback) {
-    // Clear the screen, but leave the buttons intact
-    tft.fillScreen(TFT_WHITE);
-    drawButtons();
 
+
+// Function to clear the rectangular area around the arc
+void clearArcBoundingBox(int centerX, int centerY, int radius) {
+    // The bounding box will be a square of size 2 * radius centered at (centerX, centerY)
+    int x = centerX - radius;
+    int y = centerY - radius;
+
+    // Clear the bounding box by filling it with the background color (e.g., TFT_WHITE)
+    tft.fillRect(x, y, 2 * radius, radius, TFT_WHITE);  // Only half the box, from the center downward
+}
+
+
+// Function to visualize the angles with everything outside them in green
+void drawAngleVisualization(int angle_measured, int angle_pred_springback, ScreenState currentScreen) {
 
     // Set the center at the bottom middle of the screen
     int centerX = SCREEN_WIDTH / 2;
     int centerY = SCREEN_HEIGHT;
-
     int radius = 150;  // Radius for the angle visualization
+
+    if (currentScreen == ANGLE) {
+        // Clear the rectangular area around the arc
+        clearArcBoundingBox(centerX, centerY, radius);
+    } else if (currentScreen == HOME) {
+        // Clear the full screen and draw the buttons
+        tft.fillScreen(TFT_WHITE);
+        drawButtons();
+    }
 
     // Draw the entire region in green (outside the angles)
     tft.fillCircle(centerX, centerY, radius, TFT_GREEN);
@@ -156,6 +223,8 @@ int checkButtonPress(int touchX, int touchY) {
         return 60;
     } else if (sqrt(sq(touchX - btn120_x) + sq(touchY - BTN_Y)) <= BTN_RADIUS) {
         return 120;
+    } else if (sqrt(sq(touchX - btnreset_x) + sq(touchY - BTN_Y)) <= BTN_RADIUS) {
+        return 180;
     }
     return -1;  // No button pressed
 }
@@ -191,6 +260,9 @@ void setup() {
 
   // Draw the home screen
   drawHomeScreen();
+
+  // Fill the sine and cosine lookup tables
+  setupTrigTables();
 }
 
 void loop() {
@@ -207,8 +279,8 @@ void loop() {
     switch (currentScreen) {
       case HOME:
         if (checkStartButtonPress(touchX, touchY)) {
+          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen);
           currentScreen = ANGLE;  // Switch to angle screen
-          drawAngleVisualization(angle_measured, angle_pred_springback);
         }
         break;
       case ANGLE:
@@ -217,8 +289,17 @@ void loop() {
         if (newAngle != -1) {
           angle_measured = newAngle;
           angle_pred_springback = calculateSpringbackAngle(angle_measured);
-          drawAngleVisualization(angle_measured, angle_pred_springback);
+          drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen);
+
+          if (newAngle == 180) {
+              for (angle_measured = 180; angle_measured >= 90; angle_measured--) {
+                  angle_pred_springback = calculateSpringbackAngle(angle_measured);
+                  drawAngleVisualization(angle_measured, angle_pred_springback, currentScreen);
+                  delay(500);
+              }
+          }
         }
+
 
         // Check if Back button is pressed
         if (checkHomeButtonPress(touchX, touchY)) {
