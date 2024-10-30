@@ -17,7 +17,8 @@ XPT2046_Touchscreen touchscreen(XPT2046_CS, XPT2046_IRQ);
 // Define screen states
 enum ScreenState {
   HOME,
-  ANGLE
+  ANGLE,
+  MOTOR
 };
 ScreenState currentScreen = HOME;  // Track the current screen state
 
@@ -60,16 +61,68 @@ int btn120_x = btn60_x + BTN_SPACING + BTN_RADIUS * 2;
 #define RENDER_BTN_X SCREEN_WIDTH - RENDER_BTN_SIZE
 #define RENDER_BTN_Y 0
 
-// Start button properties
+// Start angle button properties
 #define START_BTN_RADIUS 50
 #define START_BTN_Y 100
-#define START_BTN_X (SCREEN_WIDTH / 2)
+#define START_BTN_X (SCREEN_WIDTH / 4)
 
 #define NUM_DEGREES 361 // 0 to 180 degrees and -180 to 180 degrees (361 total)
 #define ANGLE_LIST_OFFSET 180       // To offset the index for negative angles
 
 int16_t sinTable[NUM_DEGREES];
 int16_t cosTable[NUM_DEGREES];
+
+// Start motor button properties
+#define START_MOTOR_BTN_RADIUS 50
+#define START_MOTOR_BTN_Y 100
+#define START_MOTOR_BTN_X (SCREEN_WIDTH / 4 * 3)
+
+// Motor control button properties
+#define BTN_SQUARE_SIZE 30
+#define BTN_SQUARE_SPACING BTN_SQUARE_SIZE / 2
+#define BTN_RECT_WIDTH 100
+
+#define BTN_MOTOR_RESET_Y SCREEN_HEIGHT / 2
+#define BTN_MOTOR_NEG_Y BTN_MOTOR_RESET_Y + BTN_SQUARE_SIZE + BTN_SQUARE_SPACING / 2
+#define BTN_MOTOR_POS_Y BTN_MOTOR_NEG_Y
+
+#define BTN_X_CENTER SCREEN_WIDTH / 2 - BTN_SQUARE_SIZE / 2
+
+#define BTN_NEG_01_X BTN_X_CENTER - BTN_SQUARE_SIZE - BTN_SQUARE_SPACING
+#define BTN_NEG_1_X BTN_NEG_01_X - BTN_SQUARE_SIZE - BTN_SQUARE_SPACING
+#define BTN_NEG_5_X BTN_NEG_1_X - BTN_SQUARE_SIZE - BTN_SQUARE_SPACING
+#define BTN_POS_01_X BTN_X_CENTER + BTN_SQUARE_SIZE + BTN_SQUARE_SPACING
+#define BTN_POS_1_X BTN_POS_01_X + BTN_SQUARE_SIZE + BTN_SQUARE_SPACING
+#define BTN_POS_5_X BTN_POS_1_X + BTN_SQUARE_SIZE + BTN_SQUARE_SPACING
+
+#define BTN_SAVED_POS_WIDTH 70
+#define BTN_SAVED_POS_HEIGHT 30
+#define BTN_SAVED_POS_Y SCREEN_HEIGHT - BTN_SAVED_POS_HEIGHT - 5
+#define BTN_SAVED_POS2_X SCREEN_WIDTH / 2 - BTN_SAVED_POS_WIDTH - 10
+#define BTN_SAVED_POS1_X BTN_SAVED_POS2_X - BTN_SAVED_POS_WIDTH - 10
+#define BTN_SAVED_POS3_X SCREEN_WIDTH / 2 + 10
+#define BTN_SAVED_POS4_X BTN_SAVED_POS3_X + BTN_SAVED_POS_WIDTH + 10
+float savedPositions[4] = {10.00, 21.00, 13.00, 9.00};
+
+#define BTN_RESET_X SCREEN_WIDTH - BTN_RECT_WIDTH
+#define BTN_RESET_Y 0
+
+#define MOTOR_DISTANCE_Y SCREEN_HEIGHT / 2 - 10
+#define MOTOR_DISTANCE_X SCREEN_WIDTH / 2
+
+#define MOTOR_GO_SIZE BTN_SQUARE_SIZE * 1.5
+#define MOTOR_GO_X MOTOR_DISTANCE_X - MOTOR_GO_SIZE / 2
+#define MOTOR_GO_Y BTN_MOTOR_RESET_Y + 10
+bool moving = false;
+float motorDistance = 0.00;
+#define dirPin 22 // Blue
+#define stepPin 27 // Yellow
+const int stepsPerRevolution = 800;  // change this to fit the number of steps per revolution
+const int mmPerRev = 1;  // Distance moved per revolution in mm
+const int rps = 4;  // Revolutions per second desired
+const int motorDelay = 1000000 / (stepsPerRevolution * rps); // Delay in microseconds between steps
+float currentMotorPosition = 0.00;
+
 
 void setupTrigTables() {  // Fill the sine and cosine lookup tables for the visualization of angles
     for (int i = -180; i <= 180; i++) {
@@ -137,6 +190,89 @@ void drawMeasureButton(MeasureState currentMeasureState) {
     }
   }
 
+void drawMotorDistance(float &motorDistance, float &currentMotorPosition) {
+    // Clear old distance value
+    tft.fillRect(0, SCREEN_HEIGHT / 2 - 80, SCREEN_WIDTH, 70, TFT_WHITE);
+
+    // Set text color and size
+    tft.setTextColor(TFT_BLACK);
+    tft.setTextSize(FONT_SIZE * 2.5);
+
+    // Draw current motor position
+    tft.drawCentreString("Cur Position: " + String(currentMotorPosition) + " mm", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 70, FONT_SIZE);
+
+    // Draw motor distance displayed in the center of the screen
+    tft.drawCentreString("Des Position: " + String(motorDistance) + " mm", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2 - 30, FONT_SIZE);
+}
+
+// Draw the button to move the motor. Takes as input the color it should have
+void drawMotorGoButton(bool moving) {
+    tft.setTextColor(TFT_BLACK);
+    tft.setTextSize(FONT_SIZE * 1.5);
+
+    // Draw the button with the specified color
+    if (moving){
+        tft.fillRect(MOTOR_GO_X, MOTOR_GO_Y, MOTOR_GO_SIZE, MOTOR_GO_SIZE, TFT_RED);
+        tft.drawCentreString("MOVING", MOTOR_GO_X + BTN_SQUARE_SIZE / 2 + 5, MOTOR_GO_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+    } else {
+        tft.fillRect(MOTOR_GO_X, MOTOR_GO_Y, MOTOR_GO_SIZE, MOTOR_GO_SIZE, TFT_GREEN);
+        tft.drawCentreString("MOVE", MOTOR_GO_X + BTN_SQUARE_SIZE / 2 + 10, MOTOR_GO_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+    }
+
+}
+
+void drawMotorControlButtons() {
+    // Draw motor control buttons - should be square buttons with -20, -10, -5, reset, +5, +10, +20
+
+    tft.setTextColor(TFT_WHITE);
+
+    // Draw -20, -10, and -5 button (square buttons)
+    tft.fillRect(BTN_NEG_5_X, BTN_MOTOR_NEG_Y, BTN_SQUARE_SIZE, BTN_SQUARE_SIZE, TFT_DARKGREY);
+    tft.drawCentreString("-5.0", BTN_NEG_5_X + BTN_SQUARE_SIZE / 2, BTN_MOTOR_NEG_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+    tft.fillRect(BTN_NEG_1_X, BTN_MOTOR_NEG_Y, BTN_SQUARE_SIZE, BTN_SQUARE_SIZE, TFT_DARKGREY);
+    tft.drawCentreString("-1.0", BTN_NEG_1_X + BTN_SQUARE_SIZE / 2, BTN_MOTOR_NEG_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+    tft.fillRect(BTN_NEG_01_X, BTN_MOTOR_NEG_Y, BTN_SQUARE_SIZE, BTN_SQUARE_SIZE, TFT_DARKGREY);
+    tft.drawCentreString("-0.1", BTN_NEG_01_X + BTN_SQUARE_SIZE / 2, BTN_MOTOR_NEG_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+
+    // Draw reset button (rectangular button)
+    tft.fillRect(BTN_RESET_X, BTN_RESET_Y, BTN_RECT_WIDTH, BTN_SQUARE_SIZE, TFT_BLUE);
+    tft.drawCentreString("RESET CUR POS", BTN_RESET_X + BTN_RECT_WIDTH / 2, BTN_RESET_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+
+    // Draw +5, +10, and +20 button (square buttons)
+    tft.fillRect(BTN_POS_01_X, BTN_MOTOR_POS_Y, BTN_SQUARE_SIZE, BTN_SQUARE_SIZE, TFT_DARKGREY);
+    tft.drawCentreString("+0.1", BTN_POS_01_X + BTN_SQUARE_SIZE / 2, BTN_MOTOR_POS_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+    tft.fillRect(BTN_POS_1_X, BTN_MOTOR_POS_Y, BTN_SQUARE_SIZE, BTN_SQUARE_SIZE, TFT_DARKGREY);
+    tft.drawCentreString("+1.0", BTN_POS_1_X + BTN_SQUARE_SIZE / 2, BTN_MOTOR_POS_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+    tft.fillRect(BTN_POS_5_X, BTN_MOTOR_POS_Y, BTN_SQUARE_SIZE, BTN_SQUARE_SIZE, TFT_DARKGREY);
+    tft.drawCentreString("+5.0", BTN_POS_5_X + BTN_SQUARE_SIZE / 2, BTN_MOTOR_POS_Y + BTN_SQUARE_SIZE / 2, FONT_SIZE);
+
+    // Define the line height based on the font size
+    int lineHeight = FONT_SIZE * 10; // Adjust as needed
+
+    // Draw buttons and display saved positions
+    tft.fillRect(BTN_SAVED_POS1_X, BTN_SAVED_POS_Y, BTN_SAVED_POS_WIDTH, BTN_SAVED_POS_HEIGHT, TFT_DARKGREEN);
+    tft.drawCentreString("POS 1", BTN_SAVED_POS1_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 - lineHeight / 2, FONT_SIZE);
+    tft.drawCentreString(String(savedPositions[0], 2) + " mm", BTN_SAVED_POS1_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 + lineHeight / 2, FONT_SIZE);
+
+    tft.fillRect(BTN_SAVED_POS2_X, BTN_SAVED_POS_Y, BTN_SAVED_POS_WIDTH, BTN_SAVED_POS_HEIGHT, TFT_ORANGE);
+    tft.drawCentreString("POS 2", BTN_SAVED_POS2_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 - lineHeight / 2, FONT_SIZE);
+    tft.drawCentreString(String(savedPositions[1], 2) + " mm", BTN_SAVED_POS2_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 + lineHeight / 2, FONT_SIZE);
+
+    tft.fillRect(BTN_SAVED_POS3_X, BTN_SAVED_POS_Y, BTN_SAVED_POS_WIDTH, BTN_SAVED_POS_HEIGHT, TFT_DARKCYAN);
+    tft.drawCentreString("POS 3", BTN_SAVED_POS3_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 - lineHeight / 2, FONT_SIZE);
+    tft.drawCentreString(String(savedPositions[2], 2) + " mm", BTN_SAVED_POS3_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 + lineHeight / 2, FONT_SIZE);
+
+    tft.fillRect(BTN_SAVED_POS4_X, BTN_SAVED_POS_Y, BTN_SAVED_POS_WIDTH, BTN_SAVED_POS_HEIGHT, TFT_PURPLE);
+    tft.drawCentreString("POS 4", BTN_SAVED_POS4_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 - lineHeight / 2, FONT_SIZE);
+    tft.drawCentreString(String(savedPositions[3], 2) + " mm", BTN_SAVED_POS4_X + BTN_SAVED_POS_WIDTH / 2, BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT / 2 + lineHeight / 2, FONT_SIZE);
+
+
+    // Draw motor distance displayed in the center top part of the screen
+    drawMotorDistance(motorDistance, currentMotorPosition);
+
+    drawMotorGoButton(moving = false);
+}
+
 // Function to draw round buttons
 void drawButtons(RenderMode currentRenderMode, MeasureState currentMeasureState) {
     // Draw control buttons
@@ -159,9 +295,28 @@ void drawHomeScreen() {
   tft.setTextSize(FONT_SIZE);
   tft.drawCentreString("Home Screen", SCREEN_WIDTH / 2, 30, FONT_SIZE);
 
+  // Draw Motor button
+  tft.fillCircle(START_MOTOR_BTN_X, START_MOTOR_BTN_Y, START_MOTOR_BTN_RADIUS, TFT_GREEN);
+  tft.drawCentreString("Start Motor", START_MOTOR_BTN_X, START_MOTOR_BTN_Y - 10, FONT_SIZE);
+
   // Draw Start button
   tft.fillCircle(START_BTN_X, START_BTN_Y, START_BTN_RADIUS, TFT_GREEN);
   tft.drawCentreString("Start Angle", START_BTN_X, START_BTN_Y - 10, FONT_SIZE);
+}
+
+// Function to draw the motor screen
+void drawMotorScreen() {
+    tft.fillScreen(TFT_WHITE);
+    tft.setTextColor(TFT_BLACK);
+    tft.setTextSize(FONT_SIZE);
+    tft.drawCentreString("Motor Screen", SCREEN_WIDTH / 2, 30, FONT_SIZE);
+    
+    // Draw Home button
+    drawCloseButton();
+
+    // Draw motor control buttons
+    drawMotorControlButtons();
+
 }
 
 // // Function to draw filled arcs (part-circles)
@@ -314,6 +469,10 @@ bool checkRenderButtonPress(int touchX, int touchY) {
 bool checkStartButtonPress(int touchX, int touchY) {
   return sqrt(sq(touchX - START_BTN_X) + sq(touchY - START_BTN_Y)) <= START_BTN_RADIUS;
 }
+// Check if the start motor button was pressed
+bool checkStartMotorButtonPress(int touchX, int touchY) {
+  return sqrt(sq(touchX - START_MOTOR_BTN_X) + sq(touchY - START_MOTOR_BTN_Y)) <= START_MOTOR_BTN_RADIUS;
+}
 // Check if the home button was pressed
 bool checkHomeButtonPress(int touchX, int touchY) {
   return sqrt(sq(touchX - HOME_BTN_X) + sq(touchY - HOME_BTN_Y)) <= HOME_BTN_SIZE;
@@ -321,6 +480,100 @@ bool checkHomeButtonPress(int touchX, int touchY) {
 // Check if the measure button was pressed
 bool checkMeasureButtonPress(int touchX, int touchY) {
   return sqrt(sq(touchX - btnmeasure_x) + sq(touchY - BTN_Y)) <= BTN_RADIUS;
+}
+
+// Check if the move button was pressed
+bool checkMoveButtonPress(int touchX, int touchY) {
+    return touchX >= MOTOR_GO_X && touchX <= MOTOR_GO_X + MOTOR_GO_SIZE &&
+           touchY >= MOTOR_GO_Y && touchY <= MOTOR_GO_Y + MOTOR_GO_SIZE;
+}
+
+// Add value to motor distance (but make checks to ensure it is within valid range)
+void addMotorDistance(float &motorDistance, float value) {
+    motorDistance += value;
+    // Ensure motor distance is within valid range
+    if (motorDistance < 0) {
+        motorDistance = 0;
+    }
+}
+
+// Check if the motor control button was pressed
+bool getMotorDistanceUpdate(int touchX, int touchY, float &motorDistance, float &currentMotorPosition) {
+    printf("TouchX: %d, TouchY: %d\n", touchX, touchY);
+    // Check if the press is within any button's square
+    if (touchX >= BTN_NEG_5_X && touchX <= (BTN_NEG_5_X + BTN_SQUARE_SIZE) &&
+        touchY >= BTN_MOTOR_NEG_Y && touchY <= (BTN_MOTOR_NEG_Y + BTN_SQUARE_SIZE)) {
+        addMotorDistance(motorDistance, -5);
+        return true;
+    } else if (touchX >= BTN_NEG_1_X && touchX <= (BTN_NEG_1_X + BTN_SQUARE_SIZE) &&
+               touchY >= BTN_MOTOR_NEG_Y && touchY <= (BTN_MOTOR_NEG_Y + BTN_SQUARE_SIZE)) {
+        addMotorDistance(motorDistance, -1);
+        return true;
+    } else if (touchX >= BTN_NEG_01_X && touchX <= (BTN_NEG_01_X + BTN_SQUARE_SIZE) &&
+               touchY >= BTN_MOTOR_NEG_Y && touchY <= (BTN_MOTOR_NEG_Y + BTN_SQUARE_SIZE)) {
+        addMotorDistance(motorDistance, -0.1);
+        return true;
+    } else if (touchX >= BTN_POS_01_X && touchX <= (BTN_POS_01_X + BTN_SQUARE_SIZE) &&
+               touchY >= BTN_MOTOR_POS_Y && touchY <= (BTN_MOTOR_POS_Y + BTN_SQUARE_SIZE)) {
+        addMotorDistance(motorDistance, 0.1);
+        return true;
+    } else if (touchX >= BTN_POS_1_X && touchX <= (BTN_POS_1_X + BTN_SQUARE_SIZE) &&
+               touchY >= BTN_MOTOR_POS_Y && touchY <= (BTN_MOTOR_POS_Y + BTN_SQUARE_SIZE)) {
+        addMotorDistance(motorDistance, 1);
+        return true;
+    } else if (touchX >= BTN_POS_5_X && touchX <= (BTN_POS_5_X + BTN_SQUARE_SIZE) &&
+               touchY >= BTN_MOTOR_POS_Y && touchY <= (BTN_MOTOR_POS_Y + BTN_SQUARE_SIZE)) {
+        addMotorDistance(motorDistance, 5);
+        return true;
+    } else if (touchX >= BTN_SAVED_POS1_X && touchX <= (BTN_SAVED_POS1_X + BTN_SAVED_POS_WIDTH) &&
+               touchY >= BTN_SAVED_POS_Y && touchY <= (BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT)) {
+        motorDistance = savedPositions[0];
+        return true;
+    } else if (touchX >= BTN_SAVED_POS2_X && touchX <= (BTN_SAVED_POS2_X + BTN_SAVED_POS_WIDTH) &&
+               touchY >= BTN_SAVED_POS_Y && touchY <= (BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT)) {
+        motorDistance = savedPositions[1];
+        return true;
+    } else if (touchX >= BTN_SAVED_POS3_X && touchX <= (BTN_SAVED_POS3_X + BTN_SAVED_POS_WIDTH) &&
+               touchY >= BTN_SAVED_POS_Y && touchY <= (BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT)) {
+        motorDistance = savedPositions[2];
+        return true;
+    } else if (touchX >= BTN_SAVED_POS4_X && touchX <= (BTN_SAVED_POS4_X + BTN_SAVED_POS_WIDTH) &&
+               touchY >= BTN_SAVED_POS_Y && touchY <= (BTN_SAVED_POS_Y + BTN_SAVED_POS_HEIGHT)) {
+        motorDistance = savedPositions[3];
+        return true;
+    } else if (touchX >= BTN_RESET_X && touchX <= (BTN_RESET_X + BTN_RECT_WIDTH) &&
+               touchY >= BTN_RESET_Y && touchY <= (BTN_RESET_Y + BTN_SQUARE_SIZE)) {
+        currentMotorPosition = 0;
+        return true;
+    } else {
+        return false;  // No button pressed
+    }
+}
+
+void moveMotor(float &motorDistance, float &currentMotorPosition) {
+    // Move the motor to the specified distance
+    // For simplicity, we will just print the motor distance
+    printf("Current motor position: %.2f mm\n", currentMotorPosition);
+    printf("Moving motor to distance: %.2f mm\n", motorDistance);
+
+    // Calculate the number of steps to move the motor
+    float distToMove = (motorDistance - currentMotorPosition);
+    // If negative, move in the opposite direction
+    if (distToMove < 0) {
+        digitalWrite(dirPin, LOW);  // TODO: Maybe flip the direction depending on setup
+    } else {
+        digitalWrite(dirPin, HIGH); // TODO: Maybe flip the direction depending on setup
+    }
+    int stepsToMove = abs(distToMove) * stepsPerRevolution / mmPerRev;
+
+    for (int i = 0; i <= stepsToMove; i++) {
+        digitalWrite(stepPin, HIGH);
+        delayMicroseconds(motorDelay);
+        digitalWrite(stepPin, LOW);
+        delayMicroseconds(motorDelay);
+    }
+    // Update the current motor position
+    currentMotorPosition = motorDistance;
 }
 
 // Calculate springback angle based on the measured angle and the material properties
@@ -383,6 +636,10 @@ void handleHomeScreen(int touchX, int touchY) {
         drawAngleVisualization(angleMeasured, angle_pred_springback, currentScreen, currentRenderMode);
         currentScreen = ANGLE;  // Switch to angle screen
     }
+    if (checkStartMotorButtonPress(touchX, touchY)) {
+        drawMotorScreen();
+        currentScreen = MOTOR;  // Switch to motor screen
+    }
 }
 
 // Function to handle the angle screen
@@ -415,6 +672,30 @@ void handleAngleScreen(int touchX, int touchY, int angleMeasured) {
   }
 }
 
+// Function to handle the motor screen
+void handleMotorScreen(int touchX, int touchY, float &motorDistance) {
+
+    // Check if Back button is pressed
+    if (checkHomeButtonPress(touchX, touchY)) {
+        currentScreen = HOME;  // Switch back to home screen
+        drawHomeScreen();
+        return;
+    }
+
+    // check if the move button was pressed
+    if (checkMoveButtonPress(touchX, touchY)) {
+        moving = !moving;
+        drawMotorGoButton(moving);
+        moveMotor(motorDistance, currentMotorPosition);
+        moving = !moving;
+        drawMotorGoButton(moving);
+    }
+
+    // Check if any of the motor control buttons were pressed
+    drawMotorDistance(motorDistance, currentMotorPosition);
+
+}
+
 
 // Setup function - runs once
 void setup() {
@@ -434,6 +715,10 @@ void setup() {
 
   // Fill the sine and cosine lookup tables
   setupTrigTables();
+
+  // Declare pins as output:
+  pinMode(stepPin, OUTPUT);
+  pinMode(dirPin, OUTPUT);
 }
 
 // Main loop - runs continuously after setup
@@ -443,6 +728,9 @@ void loop() {
 
     int angleMeasured;
     bool angleUpdated = getMeasuredAngle(angleMeasured);
+
+    bool motorDistanceUpdated = getMotorDistanceUpdate(touchX, touchY, motorDistance, currentMotorPosition);
+    
 
     // Process screen state whether touch is detected or from other inputs
     switch (currentScreen) {
@@ -455,6 +743,13 @@ void loop() {
         case ANGLE:
             if (touchDetected || angleUpdated) {
                 handleAngleScreen(touchX, touchY, angleMeasured);
+            }
+            break;
+        
+        case MOTOR:
+            if (touchDetected) {
+                printf("Motor Distance: %f\n", motorDistance);
+                handleMotorScreen(touchX, touchY, motorDistance);
             }
             break;
     }

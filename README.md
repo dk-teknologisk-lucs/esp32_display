@@ -27,8 +27,28 @@ Use the following:
 
 # TODO:
 
+Tastatur for at angive motorDistance
+0.01 og 0.1 0g 1 i motor-distance
+Gem 3 bestemte distancer of brug disse (evt. på SD-kort?)
+Koble motor til
+
+
 - [ ] Implement SquareLine UI or LVGL to imporve UI
     - https://github.com/witnessmenow/ESP32-Cheap-Yellow-Display/discussions/102
     - https://randomnerdtutorials.com/lvgl-cheap-yellow-display-esp32-2432s028r/
 - [ ] Implement inputs from outside (to adjust the angle)
 - [ ] Implement outputs (to control motors)
+
+
+# Wiring:
+From ESP32-screen to motor driver
+Use CN1 port (the other will not work, as GPIO35 is only input and 21 is used for backlight screen)
+EN: active_low (Should be GND)
+Red: Not used (3.3V)
+Yellow: Step (GPIO 27)
+Blue: Dir (GPIO 22)
+Black: GND
+
+From driver to motor:
+Blue, Yellow: phase 1
+Red, Green: phase 2
