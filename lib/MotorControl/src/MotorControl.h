@@ -16,4 +16,8 @@ const int motorDelay = 1000000 / (stepsPerRevolution * rps); // Delay in microse
 
 void moveMotor(float &motorDistance, float &currentMotorPosition);
 
+void addMotorDistance(float &motorDistance, float value);
+
+bool getMotorDistanceUpdate(int touchX, int touchY, float &motorDistance, float &currentMotorPosition, float savedPositions[]);
+
 #endif

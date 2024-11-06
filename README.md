@@ -29,6 +29,11 @@ Red & Green: phase 2
 
 # Development:
 
+## Custom libs
+
+Som custom libraries has been made. Even though they are not necessarily reusable they are used to maintain a fairly short main.cpp file.
+These are placed in the /lib folder.
+
 ## Setup using VSCode
 For the first test use: [this tutorial for the display](https://randomnerdtutorials.com/programming-esp32-cyd-cheap-yellow-display-vs-code/) and [this tutorial for VSCode setup](https://randomnerdtutorials.com/vs-code-platformio-ide-esp32-esp8266-arduino/)
 
