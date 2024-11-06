@@ -1,8 +1,10 @@
 #include <SPI.h>
 #include <TFT_eSPI.h>
 #include <XPT2046_Touchscreen.h>
+#include <GeneralDisplay.h>
+#include <MotorControl.h>
 
-TFT_eSPI tft = TFT_eSPI();
+// TFT_eSPI tft = TFT_eSPI();
 
 // Touchscreen pins
 #define XPT2046_IRQ 36   // T_IRQ
@@ -20,18 +22,16 @@ enum ScreenState {
   ANGLE,
   MOTOR
 };
-ScreenState currentScreen = HOME;  // Track the current screen state
-
 enum RenderMode {
   FAST,
   ACCURATE
 };
-RenderMode currentRenderMode = FAST;
-
 enum MeasureState {
   MEASURING,
   IDLE
 };
+ScreenState currentScreen = HOME;  // Track the current screen state
+RenderMode currentRenderMode = FAST;
 MeasureState currentMeasureState = IDLE;
 
 #define SCREEN_WIDTH 320
@@ -115,12 +115,6 @@ float savedPositions[4] = {10.00, 21.00, 13.00, 9.00};
 #define MOTOR_GO_Y BTN_MOTOR_RESET_Y + 10
 bool moving = false;
 float motorDistance = 0.00;
-#define dirPin 22 // Blue
-#define stepPin 27 // Yellow
-const int stepsPerRevolution = 800;  // change this to fit the number of steps per revolution
-const int mmPerRev = 1;  // Distance moved per revolution in mm
-const int rps = 4;  // Revolutions per second desired
-const int motorDelay = 1000000 / (stepsPerRevolution * rps); // Delay in microseconds between steps
 float currentMotorPosition = 0.00;
 
 
@@ -130,21 +124,6 @@ void setupTrigTables() {  // Fill the sine and cosine lookup tables for the visu
         sinTable[index] = (int16_t)(sin(i * DEG_TO_RAD) * 1000); // Scale by 1000
         cosTable[index] = (int16_t)(cos(i * DEG_TO_RAD) * 1000); // Scale by 1000
     }
-}
-
-void drawCloseButton() {
-    // Draw close button
-    tft.fillRect(HOME_BTN_X, HOME_BTN_Y, HOME_BTN_SIZE, HOME_BTN_SIZE, TFT_RED);
-    
-    // Draw cross inside home button (rotated 45 degrees)
-    int centerX = HOME_BTN_X + HOME_BTN_SIZE / 2;
-    int centerY = HOME_BTN_Y + HOME_BTN_SIZE / 2;
-    int lineLength = HOME_BTN_SIZE * 0.6; // Length of the cross lines
-    int lineThickness = 4; // Thickness of the lines
-
-    // Draw diagonal line from top-left to bottom-right
-    tft.fillRect(centerX - lineThickness / 2, centerY - lineLength / 2, lineThickness, lineLength, TFT_WHITE);
-    tft.fillRect(centerX - lineLength / 2, centerY - lineThickness / 2, lineLength, lineThickness, TFT_WHITE);
 }
 
 void drawRenderButton(RenderMode currentRenderMode) {
@@ -492,9 +471,9 @@ bool checkMoveButtonPress(int touchX, int touchY) {
 void addMotorDistance(float &motorDistance, float value) {
     motorDistance += value;
     // Ensure motor distance is within valid range
-    if (motorDistance < 0) {
-        motorDistance = 0;
-    }
+    // if (motorDistance < 0) {
+    //     motorDistance = 0;
+    // }
 }
 
 // Check if the motor control button was pressed
@@ -548,32 +527,6 @@ bool getMotorDistanceUpdate(int touchX, int touchY, float &motorDistance, float 
     } else {
         return false;  // No button pressed
     }
-}
-
-void moveMotor(float &motorDistance, float &currentMotorPosition) {
-    // Move the motor to the specified distance
-    // For simplicity, we will just print the motor distance
-    printf("Current motor position: %.2f mm\n", currentMotorPosition);
-    printf("Moving motor to distance: %.2f mm\n", motorDistance);
-
-    // Calculate the number of steps to move the motor
-    float distToMove = (motorDistance - currentMotorPosition);
-    // If negative, move in the opposite direction
-    if (distToMove < 0) {
-        digitalWrite(dirPin, LOW);  // TODO: Maybe flip the direction depending on setup
-    } else {
-        digitalWrite(dirPin, HIGH); // TODO: Maybe flip the direction depending on setup
-    }
-    int stepsToMove = abs(distToMove) * stepsPerRevolution / mmPerRev;
-
-    for (int i = 0; i <= stepsToMove; i++) {
-        digitalWrite(stepPin, HIGH);
-        delayMicroseconds(motorDelay);
-        digitalWrite(stepPin, LOW);
-        delayMicroseconds(motorDelay);
-    }
-    // Update the current motor position
-    currentMotorPosition = motorDistance;
 }
 
 // Calculate springback angle based on the measured angle and the material properties
@@ -704,7 +657,6 @@ void setup() {
   // Initialize the touchscreen
   touchscreenSPI.begin(XPT2046_CLK, XPT2046_MISO, XPT2046_MOSI, XPT2046_CS);
   touchscreen.begin(touchscreenSPI);
-  touchscreen.setRotation(1);  // Set touchscreen rotation to landscape mode
 
   // Initialize the TFT display
   tft.init();
